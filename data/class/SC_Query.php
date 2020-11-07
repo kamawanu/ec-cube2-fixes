@@ -21,6 +21,31 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 
+class _safe_MDB2 {
+    protected $mdb2;
+    public $dsn;
+    public function __construct(&$MDB2 ){
+
+        $this->mdb2 = & $MDB2;
+        $this->dsn = & $MDB2->dsn;
+
+    }
+    public function __call($name,$args) {
+        return call_user_func_array(array($this->mdb2,$name),$args);
+    }
+    public static function connect($dsn,$opt) {
+        return new static(MDB2::connect($dns,$opt));
+    }
+    public static function singleton($dns,$opt) {
+        return new static(MDB2::singleton($dns,$opt));
+    }
+    public function __destructor() {
+        if($this->mdb2->inTransaction()) {
+            $this->mdb2->commit();
+        }
+    }
+}
+
 /**
  * SQLの構築・実行を行う
  *
@@ -50,6 +75,16 @@ class SC_Query
      */
     public function __construct($dsn = '', $force_run = false, $new = false)
     {
+        if ( $dsn instanceof MDB2 ) {
+            $this->conn = $dns;
+        } else {
+            $this->_connectmdb2($dns,$new);
+        }
+        $this->_construct_final($force_run);
+    }
+
+    protected function _connectmdb2($dns, $new )
+    {
         if ($dsn == '') {
             $dsn = array(
                 'phptype'  => DB_TYPE,
@@ -74,10 +109,13 @@ class SC_Query
         );
 
         if ($new) {
-            $this->conn = MDB2::connect($dsn, $options);
+            $this->conn = _safe_MDB2::connect($dsn, $options);
         } else {
-            $this->conn = MDB2::singleton($dsn, $options);
+            $this->conn = _safe_MDB2::singleton($dsn, $options);
         }
+    }
+
+    protected function _construct_final($force_run) {
         if (!PEAR::isError($this->conn)) {
             $this->conn->setCharset('utf8');
             $this->conn->setFetchMode(MDB2_FETCHMODE_ASSOC);
@@ -102,16 +140,14 @@ class SC_Query
     {
         $objThis = SC_Query_Ex::getPoolInstance($dsn);
         if (is_null($objThis)) {
-            $objThis = SC_Query_Ex::setPoolInstance(new SC_Query_Ex($dsn, $force_run, $new), $dsn);
+            $newer = new static($dsn, $force_run, $new);
+            $objThis = SC_Query_Ex::setPoolInstance($newer->conn, $dsn);
         }
-        /*
-         * 歴史的な事情で、このメソッドの呼び出し元は参照で受け取る確率がある。
-         * 退避しているインスタンスをそのまま返すと、退避している SC_Query の
-         * プロパティを直接書き換えることになる。これを回避するため、クローンを返す。
-         * 厳密な意味でのシングルトンではないが、パフォーマンス的に大差は無い。
-         */
+        if( ! $objThis->inTransaction() ) {
+            $objThis->beginTransaction();
+        }
 
-        return clone $objThis;
+        return new static($objThis,$force_run,$new);
     }
 
     /**
@@ -201,9 +237,9 @@ class SC_Query
     public function commit()
     {
         if ($this->inTransaction()) {
-            return $this->conn->commit();
+            ///return $this->conn->commit();
         } else {
-            return false;
+            ///return false;
         }
     }
 
@@ -215,7 +251,7 @@ class SC_Query
      */
     public function begin()
     {
-        return $this->conn->beginTransaction();
+        ///return $this->conn->beginTransaction();
     }
 
     /**
